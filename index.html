@@ -120,7 +120,6 @@
       gap: 8px;
       margin-top: 8px;
     }
-
     .kid-list {
       margin-top: 8px;
       flex: 1;
@@ -148,7 +147,6 @@
       gap: 6px;
       flex-shrink: 0;
     }
-
     .chat-shell {
       flex: 1;
       display: flex;
@@ -223,12 +221,10 @@
       white-space: nowrap;
       padding-inline: 16px;
     }
-
     .auth-wrapper {
       max-width: 420px;
       margin: 60px auto;
     }
-
     .chip {
       display: inline-flex;
       align-items: center;
@@ -247,11 +243,13 @@
       background: #fef3c7;
       color: #92400e;
     }
-
     #join-family-section {
       display: none;
       max-width: 480px;
       margin: 40px auto;
+    }
+    .hidden {
+      display: none !important;
     }
 
     /* QR modal */
@@ -414,11 +412,18 @@
               <p class="muted" style="padding:4px 8px;">No messages yet.</p>
             </div>
             <form id="message-form" class="chat-input-row">
+              <button type="button" id="attach-btn" class="btn-secondary">📷</button>
               <input
                 id="message-text"
                 type="text"
                 placeholder="Type a message to your family…"
                 autocomplete="off"
+              />
+              <input
+                type="file"
+                id="image-input"
+                accept="image/*"
+                class="hidden"
               />
               <button type="submit" class="btn-primary">Send</button>
             </form>
@@ -488,6 +493,9 @@
     const messageForm = document.getElementById("message-form");
     const messageTextInput = document.getElementById("message-text");
     const chatSubtitle = document.getElementById("chat-subtitle");
+
+    const attachBtn = document.getElementById("attach-btn");
+    const imageInput = document.getElementById("image-input");
 
     const joinFamilyIdInput = document.getElementById("join-family-id");
     const joinFamilyBtn = document.getElementById("join-family-btn");
@@ -563,7 +571,6 @@
         )
         .join("");
 
-      // bind QR buttons
       kidsListEl.querySelectorAll("button[data-action='show-qr']").forEach((btn) => {
         btn.addEventListener("click", () => {
           const kidId = btn.getAttribute("data-kid-id");
@@ -616,10 +623,29 @@
             minute: "2-digit",
           });
 
+          let content = "";
+          if (m.text) {
+            content += `<div>${m.text}</div>`;
+          }
+          if (m.image_public_url) {
+            content += `
+              <div style="margin-top:4px;">
+                <img
+                  src="${m.image_public_url}"
+                  alt="Photo"
+                  style="max-width:180px; border-radius:12px; display:block;"
+                />
+              </div>
+            `;
+          }
+          if (!content) {
+            content = "<div>(empty)</div>";
+          }
+
           return `
             <div class="bubble-row">
               <div class="${cls}">
-                ${m.text || ""}
+                ${content}
                 <div class="bubble-meta">${senderName} • ${time}</div>
               </div>
             </div>
@@ -646,7 +672,17 @@
         return;
       }
 
-      lastMessages = data || [];
+      lastMessages = (data || []).map((m) => {
+        if (m.image_url) {
+          const { data: publicData } = client
+            .storage
+            .from("chat_uploads")
+            .getPublicUrl(m.image_url);
+          return { ...m, image_public_url: publicData.publicUrl };
+        }
+        return m;
+      });
+
       renderMessages();
     }
 
@@ -753,7 +789,6 @@
       }
 
       await loadMembers();
-
       await loadMessages();
       subscribeToMessages();
     }
@@ -1023,22 +1058,64 @@
       }
     });
 
+    // Attach button triggers file picker
+    attachBtn.addEventListener("click", () => {
+      imageInput.click();
+    });
+
     messageForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentUser) return;
+
       const text = messageTextInput.value.trim();
-      if (!text) return;
+      const file = imageInput.files[0];
+
+      if (!text && !file) return;
+
       messageTextInput.disabled = true;
+
       try {
+        let imagePath = null;
+
+        if (file) {
+          const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+          const fileName =
+            currentFamily.id +
+            "/" +
+            Date.now() +
+            "-" +
+            Math.random().toString(36).slice(2) +
+            "." +
+            ext;
+
+          const { error: uploadError } = await client
+            .storage
+            .from("chat_uploads")
+            .upload(fileName, file);
+
+          if (uploadError) {
+            console.error("upload error", uploadError);
+            alert("Error uploading image.");
+            messageTextInput.disabled = false;
+            return;
+          }
+
+          imagePath = fileName;
+        }
+
         const { error } = await client.from("messages").insert({
           family_id: currentFamily.id,
           sender_type: "parent",
           sender_user_id: currentUser.id,
-          has_attachments: false,
-          text,
+          has_attachments: !!imagePath,
+          text: text || null,
+          image_url: imagePath,
         });
+
         if (error) throw error;
+
         messageTextInput.value = "";
+        imageInput.value = "";
         await loadMessages();
       } catch (err) {
         console.error("Send message error", err);
