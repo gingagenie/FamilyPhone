@@ -427,6 +427,7 @@
               />
               <button type="submit" class="btn-primary">Send</button>
             </form>
+            <p id="image-status" class="muted" style="margin-top:4px; min-height:1em;"></p>
           </div>
         </div>
       </div>
@@ -496,6 +497,7 @@
 
     const attachBtn = document.getElementById("attach-btn");
     const imageInput = document.getElementById("image-input");
+    const imageStatus = document.getElementById("image-status");
 
     const joinFamilyIdInput = document.getElementById("join-family-id");
     const joinFamilyBtn = document.getElementById("join-family-btn");
@@ -518,8 +520,8 @@
     let allKids = [];
     let allMembers = [];
     let membersByUserId = {};
-    let messagesSub = null;
     let lastMessages = [];
+    let messagesPollId = null;
 
     function show(el) { el.style.display = ""; }
     function hide(el) { el.style.display = "none"; }
@@ -686,31 +688,6 @@
       renderMessages();
     }
 
-    function subscribeToMessages() {
-      if (!currentFamily) return;
-      if (messagesSub) {
-        client.removeChannel(messagesSub);
-      }
-
-      messagesSub = client
-        .channel("parent_chat_" + currentFamily.id)
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "messages",
-            filter: "family_id=eq." + currentFamily.id,
-          },
-          async () => {
-            await loadMessages();
-          }
-        )
-        .subscribe((status) => {
-          console.log("parent realtime status:", status);
-        });
-    }
-
     async function loadMembers() {
       if (!currentFamily || !currentUser) return;
 
@@ -790,7 +767,9 @@
 
       await loadMembers();
       await loadMessages();
-      subscribeToMessages();
+
+      if (messagesPollId) clearInterval(messagesPollId);
+      messagesPollId = setInterval(loadMessages, 3000);
     }
 
     async function loadMembershipForUser() {
@@ -891,6 +870,7 @@
         show(authSection);
         hide(joinFamilySection);
         hide(appSection);
+        if (messagesPollId) clearInterval(messagesPollId);
       }
     }
 
@@ -1063,6 +1043,14 @@
       imageInput.click();
     });
 
+    imageInput.addEventListener("change", () => {
+      if (imageInput.files[0]) {
+        imageStatus.textContent = "Photo attached – tap Send to post it.";
+      } else {
+        imageStatus.textContent = "";
+      }
+    });
+
     messageForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentUser) return;
@@ -1073,6 +1061,7 @@
       if (!text && !file) return;
 
       messageTextInput.disabled = true;
+      imageStatus.textContent = file ? "Uploading photo…" : "Sending…";
 
       try {
         let imagePath = null;
@@ -1096,6 +1085,7 @@
           if (uploadError) {
             console.error("upload error", uploadError);
             alert("Error uploading image.");
+            imageStatus.textContent = "Error uploading image.";
             messageTextInput.disabled = false;
             return;
           }
@@ -1116,10 +1106,12 @@
 
         messageTextInput.value = "";
         imageInput.value = "";
+        imageStatus.textContent = "";
         await loadMessages();
       } catch (err) {
         console.error("Send message error", err);
         alert("Failed to send message – check console / RLS.");
+        imageStatus.textContent = "Error sending message.";
       } finally {
         messageTextInput.disabled = false;
       }
