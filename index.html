@@ -116,7 +116,6 @@
       margin-top: 8px;
     }
 
-    /* Kids list */
     .kid-list {
       margin-top: 8px;
       flex: 1;
@@ -135,7 +134,6 @@
       background: #f9fafb;
     }
 
-    /* Chat */
     .chat-shell {
       flex: 1;
       display: flex;
@@ -235,6 +233,12 @@
       color: #92400e;
     }
 
+    #join-family-section {
+      display: none;
+      max-width: 480px;
+      margin: 40px auto;
+    }
+
     @media (max-width: 800px) {
       .grid {
         grid-template-columns: minmax(0, 1fr);
@@ -271,12 +275,33 @@
       </div>
     </section>
 
-    <!-- APP SECTION -->
+    <!-- JOIN FAMILY SECTION (for new relatives / new accounts with no family yet) -->
+    <section id="join-family-section">
+      <div class="card">
+        <h2>Join your family</h2>
+        <p class="muted">
+          Ask a parent for your <strong>Family ID</strong> from their app, then join as a relative (Nanny, Grandad, Aunty, etc).
+        </p>
+        <label for="join-family-id">Family ID</label>
+        <input id="join-family-id" type="text" placeholder="Paste family ID (e.g. 05c8...)" />
+        <div class="row-end">
+          <button id="join-family-btn" class="btn-primary">Join as relative</button>
+        </div>
+        <p class="muted" id="join-family-status" style="margin-top:6px;"></p>
+        <hr style="margin:16px 0; border:none; border-top:1px solid #e5e7eb;" />
+        <p class="muted">Are you the parent setting this up for the first time?</p>
+        <div class="row-end">
+          <button id="join-create-family-btn" class="btn-secondary">I'm a parent – create a new family</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- MAIN APP SECTION -->
     <section id="app-section" style="display:none; flex:1; min-height:0;">
       <div class="grid">
         <!-- LEFT COLUMN -->
         <div style="display:flex; flex-direction:column; gap:16px; min-height:0;">
-          <!-- Profile / display name -->
+          <!-- Profile -->
           <div class="card">
             <h2>Your profile</h2>
             <p class="muted" id="profile-email"></p>
@@ -298,6 +323,7 @@
               <div>
                 <h2>Family</h2>
                 <p id="family-name" class="muted">Loading…</p>
+                <p class="muted" id="family-code-line"></p>
               </div>
               <button id="create-family-btn" class="btn-secondary">Create family</button>
             </div>
@@ -361,6 +387,7 @@
     const userInfoEl = document.getElementById("user-info");
     const signOutBtn = document.getElementById("sign-out-btn");
     const authSection = document.getElementById("auth-section");
+    const joinFamilySection = document.getElementById("join-family-section");
     const appSection = document.getElementById("app-section");
 
     const authEmail = document.getElementById("auth-email");
@@ -376,6 +403,7 @@
     const roleChip = document.getElementById("role-chip");
 
     const familyNameEl = document.getElementById("family-name");
+    const familyCodeLineEl = document.getElementById("family-code-line");
     const familyRoleNoteEl = document.getElementById("family-role-note");
     const kidsRoleNoteEl = document.getElementById("kids-role-note");
     const createFamilyBtn = document.getElementById("create-family-btn");
@@ -390,24 +418,32 @@
     const messageTextInput = document.getElementById("message-text");
     const chatSubtitle = document.getElementById("chat-subtitle");
 
+    const joinFamilyIdInput = document.getElementById("join-family-id");
+    const joinFamilyBtn = document.getElementById("join-family-btn");
+    const joinFamilyStatus = document.getElementById("join-family-status");
+    const joinCreateFamilyBtn = document.getElementById("join-create-family-btn");
+
     // State
     let currentUser = null;
     let currentFamily = null;
+    let myMembership = null;
+    let myRole = "parent";
+    let myDisplayName = "";
     let allKids = [];
     let allMembers = [];
     let membersByUserId = {};
     let messagesSub = null;
     let lastMessages = [];
-    let myDisplayName = "";
-    let myRole = "parent"; // default assumption
 
     // ===== HELPERS =====
+    function show(el) { el.style.display = ""; }
+    function hide(el) { el.style.display = "none"; }
+
     function scrollMessagesToBottom() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     function setRoleUI() {
-      // Update chip + permissions based on myRole
       if (myRole === "relative") {
         roleChip.textContent = "Relative";
         roleChip.classList.add("chip-relative");
@@ -415,9 +451,6 @@
 
         createFamilyBtn.disabled = true;
         createFamilyBtn.style.opacity = "0.5";
-        createFamilyBtn.title = "Only parents can create families.";
-
-        kidForm.style.display = "none";
         kidsRoleNoteEl.textContent = "You’re a relative – you can chat, but only parents can add kids.";
         familyRoleNoteEl.textContent = "You’re a relative in this family. Ask a parent if you need changes.";
       } else {
@@ -427,9 +460,6 @@
 
         createFamilyBtn.disabled = false;
         createFamilyBtn.style.opacity = "1";
-        createFamilyBtn.title = "";
-
-        kidForm.style.display = "flex";
         kidsRoleNoteEl.textContent = "";
         familyRoleNoteEl.textContent = "You’re a parent – you can manage kids and family settings.";
       }
@@ -574,9 +604,9 @@
         return map;
       }, {});
 
-      const me = membersByUserId[currentUser.id] || null;
-      myDisplayName = me?.display_name?.trim() || "";
-      myRole = me?.role || "parent";
+      myMembership = membersByUserId[currentUser.id] || null;
+      myDisplayName = myMembership?.display_name?.trim() || "";
+      myRole = myMembership?.role || "parent";
 
       displayNameInput.value = myDisplayName;
       setRoleUI();
@@ -584,45 +614,46 @@
 
     async function loadFamilyAndData() {
       if (!currentUser) return;
+      if (!myMembership) {
+        // no membership yet – show join flow
+        hide(appSection);
+        show(joinFamilySection);
+        familyNameEl.textContent = "No family yet.";
+        return;
+      }
 
+      show(appSection);
+      hide(joinFamilySection);
+
+      const familyId = myMembership.family_id;
       familyNameEl.textContent = "Loading family…";
       kidsListEl.innerHTML = '<p class="muted">Loading kids…</p>';
       messagesEl.innerHTML =
         '<p class="muted" style="padding:4px 8px;">Loading messages…</p>';
 
-      // Families
-      const { data: families, error: famErr } = await client
+      // Family
+      const { data: family, error: famErr } = await client
         .from("families")
         .select("*")
-        .order("created_at", { ascending: true });
+        .eq("id", familyId)
+        .single();
 
-      if (famErr) {
-        console.error("families error", famErr);
-        familyNameEl.textContent = "Error loading families.";
+      if (famErr || !family) {
+        console.error("family load error", famErr);
+        familyNameEl.textContent = "Error loading family.";
         return;
       }
 
-      if (!families || families.length === 0) {
-        currentFamily = null;
-        familyNameEl.textContent = "No family created yet.";
-        kidsListEl.innerHTML =
-          '<p class="muted">Create a family, then add your kids.</p>';
-        messagesEl.innerHTML =
-          '<p class="muted" style="padding:4px 8px;">Create a family to start chatting.</p>';
-        chatSubtitle.textContent = "No family yet. Create one to start.";
-        return;
-      }
-
-      currentFamily = families[0];
-      familyNameEl.textContent =
-        currentFamily.name + " (" + currentFamily.id + ")";
-      chatSubtitle.textContent = "Family ID: " + currentFamily.id;
+      currentFamily = family;
+      familyNameEl.textContent = `${family.name}`;
+      familyCodeLineEl.textContent = `Family ID: ${family.id}  (Share this with relatives so they can join)`;
+      chatSubtitle.textContent = "Family ID: " + family.id;
 
       // Kids
       const { data: kids, error: kidsErr } = await client
         .from("kids")
         .select("*")
-        .eq("family_id", currentFamily.id)
+        .eq("family_id", family.id)
         .order("created_at", { ascending: true });
 
       if (kidsErr) {
@@ -634,12 +665,31 @@
         renderKids();
       }
 
-      // Members (role + display_name)
+      // Members (roles + names)
       await loadMembers();
 
       // Messages + realtime
       await loadMessages();
       subscribeToMessages();
+    }
+
+    async function loadMembershipForUser() {
+      if (!currentUser) return;
+      const { data, error } = await client
+        .from("family_members")
+        .select("family_id, user_id, role, display_name")
+        .eq("user_id", currentUser.id);
+
+      if (error) {
+        console.error("loadMembership error", error);
+        myMembership = null;
+        return;
+      }
+      if (!data || data.length === 0) {
+        myMembership = null;
+      } else {
+        myMembership = data[0]; // first membership for now
+      }
     }
 
     // ===== AUTH / SESSION =====
@@ -653,18 +703,27 @@
         currentUser = data.session.user;
         userInfoEl.textContent = "Logged in as " + (currentUser.email || "");
         signOutBtn.style.display = "inline-block";
-        authSection.style.display = "none";
-        appSection.style.display = "block";
-
+        hide(authSection);
         profileEmailEl.textContent = currentUser.email || "";
+
+        await loadMembershipForUser();
+        if (!myMembership) {
+          // New account → ask to join or create
+          show(joinFamilySection);
+          hide(appSection);
+        } else {
+          hide(joinFamilySection);
+          show(appSection);
+        }
 
         await loadFamilyAndData();
       } else {
         currentUser = null;
         userInfoEl.textContent = "Not signed in";
         signOutBtn.style.display = "none";
-        authSection.style.display = "block";
-        appSection.style.display = "none";
+        show(authSection);
+        hide(joinFamilySection);
+        hide(appSection);
       }
     }
 
@@ -727,9 +786,9 @@
       await client.auth.signOut();
     });
 
-    // Save display name → Supabase family_members.display_name
+    // Save display name → family_members.display_name
     saveDisplayNameBtn.addEventListener("click", async () => {
-      if (!currentUser || !currentFamily) return;
+      if (!currentUser || !currentFamily || !myMembership) return;
       const newName = displayNameInput.value.trim();
       displayNameStatus.textContent = "Saving…";
       saveDisplayNameBtn.disabled = true;
@@ -758,7 +817,7 @@
       }
     });
 
-    // Create family (parents only in UI – RLS still governs DB)
+    // Create family (parents only in UI)
     createFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
       if (myRole === "relative") {
@@ -779,6 +838,7 @@
           .single();
         if (error) throw error;
 
+        // Make this user a parent member
         const { error: memErr } = await client.from("family_members").insert({
           family_id: data.id,
           user_id: currentUser.id,
@@ -786,6 +846,7 @@
         });
         if (memErr) throw memErr;
 
+        await loadMembershipForUser();
         await loadFamilyAndData();
       } catch (err) {
         console.error("Create family error", err);
@@ -861,6 +922,88 @@
     });
 
     refreshMessagesBtn.addEventListener("click", loadMessages);
+
+    // JOIN FAMILY FLOW
+    joinFamilyBtn.addEventListener("click", async () => {
+      if (!currentUser) return;
+      const code = joinFamilyIdInput.value.trim();
+      if (!code) {
+        joinFamilyStatus.textContent = "Enter a family ID.";
+        return;
+      }
+      joinFamilyStatus.textContent = "Joining…";
+      joinFamilyBtn.disabled = true;
+
+      try {
+        const { data: family, error: famErr } = await client
+          .from("families")
+          .select("*")
+          .eq("id", code)
+          .single();
+
+        if (famErr || !family) {
+          joinFamilyStatus.textContent = "Family not found. Check the ID.";
+          joinFamilyBtn.disabled = false;
+          return;
+        }
+
+        const { error: memErr } = await client.from("family_members").insert({
+          family_id: family.id,
+          user_id: currentUser.id,
+          role: "relative",
+        });
+        if (memErr) throw memErr;
+
+        joinFamilyStatus.textContent = "Joined! Loading family…";
+
+        await loadMembershipForUser();
+        await loadFamilyAndData();
+
+        hide(joinFamilySection);
+        show(appSection);
+      } catch (err) {
+        console.error("Join family error", err);
+        joinFamilyStatus.textContent = "Failed to join family – check console / RLS.";
+      } finally {
+        joinFamilyBtn.disabled = false;
+      }
+    });
+
+    // "I'm a parent – create new family" shortcut from join screen
+    joinCreateFamilyBtn.addEventListener("click", async () => {
+      if (!currentUser) return;
+      const name = window.prompt("Family name?", "Richmond Family");
+      if (!name) return;
+      joinFamilyStatus.textContent = "Creating family…";
+
+      try {
+        const { data, error } = await client
+          .from("families")
+          .insert({
+            name,
+            created_by: currentUser.id,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+
+        const { error: memErr } = await client.from("family_members").insert({
+          family_id: data.id,
+          user_id: currentUser.id,
+          role: "parent",
+        });
+        if (memErr) throw memErr;
+
+        await loadMembershipForUser();
+        await loadFamilyAndData();
+
+        hide(joinFamilySection);
+        show(appSection);
+      } catch (err) {
+        console.error("Create family via join screen error", err);
+        joinFamilyStatus.textContent = "Failed to create family – check console / RLS.";
+      }
+    });
   </script>
 </body>
 </html>
