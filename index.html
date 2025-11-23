@@ -216,6 +216,25 @@
       margin: 60px auto;
     }
 
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #e5e7eb;
+      color: #374151;
+    }
+    .chip-parent {
+      background: #dbeafe;
+      color: #1d4ed8;
+    }
+    .chip-relative {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
     @media (max-width: 800px) {
       .grid {
         grid-template-columns: minmax(0, 1fr);
@@ -239,7 +258,7 @@
     <section id="auth-section" class="auth-wrapper">
       <div class="card">
         <h2>Sign in / Sign up</h2>
-        <p class="muted">Use the same account on your phone and on kids' devices.</p>
+        <p class="muted">Use the same account on your phone and kids' devices.</p>
         <label for="auth-email">Email</label>
         <input id="auth-email" type="email" placeholder="you@example.com" />
         <label for="auth-password">Password</label>
@@ -261,6 +280,10 @@
           <div class="card">
             <h2>Your profile</h2>
             <p class="muted" id="profile-email"></p>
+            <p class="muted">
+              Role:
+              <span id="role-chip" class="chip">Loading…</span>
+            </p>
             <label for="display-name-input">Your chat name (e.g. “Mum”, “Nanny Susan”, “Grandad”)</label>
             <input id="display-name-input" type="text" placeholder="How your messages appear in the chat" />
             <div class="row-end">
@@ -278,6 +301,7 @@
               </div>
               <button id="create-family-btn" class="btn-secondary">Create family</button>
             </div>
+            <p class="muted" id="family-role-note" style="margin-top:4px;"></p>
           </div>
 
           <!-- Kids -->
@@ -291,6 +315,7 @@
               <input id="kid-name-input" type="text" placeholder="Add a kid (e.g. Emily)" />
               <button type="submit" class="btn-primary">Add</button>
             </form>
+            <p class="muted" id="kids-role-note" style="margin-top:4px;"></p>
           </div>
         </div>
 
@@ -327,7 +352,7 @@
   <script>
     // ===== CONFIG =====
     const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g"; // <-- DROP YOUR ANON KEY HERE
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g"; // <-- PUT YOUR ANON KEY HERE
 
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -348,8 +373,11 @@
     const displayNameInput = document.getElementById("display-name-input");
     const saveDisplayNameBtn = document.getElementById("save-display-name-btn");
     const displayNameStatus = document.getElementById("display-name-status");
+    const roleChip = document.getElementById("role-chip");
 
     const familyNameEl = document.getElementById("family-name");
+    const familyRoleNoteEl = document.getElementById("family-role-note");
+    const kidsRoleNoteEl = document.getElementById("kids-role-note");
     const createFamilyBtn = document.getElementById("create-family-btn");
 
     const kidsListEl = document.getElementById("kids-list");
@@ -370,11 +398,41 @@
     let membersByUserId = {};
     let messagesSub = null;
     let lastMessages = [];
-    let myDisplayName = ""; // from family_members.display_name
+    let myDisplayName = "";
+    let myRole = "parent"; // default assumption
 
     // ===== HELPERS =====
     function scrollMessagesToBottom() {
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function setRoleUI() {
+      // Update chip + permissions based on myRole
+      if (myRole === "relative") {
+        roleChip.textContent = "Relative";
+        roleChip.classList.add("chip-relative");
+        roleChip.classList.remove("chip-parent");
+
+        createFamilyBtn.disabled = true;
+        createFamilyBtn.style.opacity = "0.5";
+        createFamilyBtn.title = "Only parents can create families.";
+
+        kidForm.style.display = "none";
+        kidsRoleNoteEl.textContent = "You’re a relative – you can chat, but only parents can add kids.";
+        familyRoleNoteEl.textContent = "You’re a relative in this family. Ask a parent if you need changes.";
+      } else {
+        roleChip.textContent = "Parent";
+        roleChip.classList.add("chip-parent");
+        roleChip.classList.remove("chip-relative");
+
+        createFamilyBtn.disabled = false;
+        createFamilyBtn.style.opacity = "1";
+        createFamilyBtn.title = "";
+
+        kidForm.style.display = "flex";
+        kidsRoleNoteEl.textContent = "";
+        familyRoleNoteEl.textContent = "You’re a parent – you can manage kids and family settings.";
+      }
     }
 
     function renderKids() {
@@ -488,7 +546,7 @@
             table: "messages",
             filter: "family_id=eq." + currentFamily.id,
           },
-          async (_payload) => {
+          async () => {
             await loadMessages();
           }
         )
@@ -518,7 +576,10 @@
 
       const me = membersByUserId[currentUser.id] || null;
       myDisplayName = me?.display_name?.trim() || "";
+      myRole = me?.role || "parent";
+
       displayNameInput.value = myDisplayName;
+      setRoleUI();
     }
 
     async function loadFamilyAndData() {
@@ -573,7 +634,7 @@
         renderKids();
       }
 
-      // Members (for display_name)
+      // Members (role + display_name)
       await loadMembers();
 
       // Messages + realtime
@@ -682,8 +743,8 @@
 
         if (error) throw error;
 
-        await loadMembers();  // refresh member map + myDisplayName
-        renderMessages();     // re-label any existing messages
+        await loadMembers();
+        renderMessages();
 
         displayNameStatus.textContent = newName
           ? `Saved – your messages will appear as “${newName}”.`
@@ -697,9 +758,13 @@
       }
     });
 
-    // Create family
+    // Create family (parents only in UI – RLS still governs DB)
     createFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
+      if (myRole === "relative") {
+        alert("Only parents can create families.");
+        return;
+      }
       const name = window.prompt("Family name?", "Richmond Family");
       if (!name) return;
       createFamilyBtn.disabled = true;
@@ -730,9 +795,13 @@
       }
     });
 
-    // Add kid
+    // Add kid (parents only)
     kidForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (myRole === "relative") {
+        alert("Only parents can add kids.");
+        return;
+      }
       if (!currentFamily) {
         alert("Create a family first.");
         return;
@@ -782,7 +851,7 @@
         });
         if (error) throw error;
         messageTextInput.value = "";
-        await loadMessages(); // realtime should cover it, this is a safety net
+        await loadMessages();
       } catch (err) {
         console.error("Send message error", err);
         alert("Failed to send message – check console / RLS.");
