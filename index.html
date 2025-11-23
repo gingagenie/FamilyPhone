@@ -60,6 +60,11 @@
       color: #111827;
       border: 1px solid #d1d5db;
     }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid #e5e7eb;
+      color: #374151;
+    }
     .muted {
       font-size: 12px;
       opacity: 0.7;
@@ -132,6 +137,16 @@
       font-size: 13px;
       margin-bottom: 6px;
       background: #f9fafb;
+      gap: 8px;
+    }
+    .kid-card-main {
+      display: flex;
+      flex-direction: column;
+    }
+    .kid-card-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
     }
 
     .chat-shell {
@@ -234,8 +249,49 @@
     }
 
     #join-family-section {
+      display: none;
       max-width: 480px;
       margin: 40px auto;
+    }
+
+    /* QR modal */
+    .qr-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 40;
+    }
+    .qr-modal-backdrop.show {
+      display: flex;
+    }
+    .qr-modal-card {
+      background: #ffffff;
+      border-radius: 20px;
+      padding: 16px;
+      max-width: 340px;
+      width: 100%;
+      box-shadow: 0 24px 60px rgba(15,23,42,0.4);
+      text-align: center;
+    }
+    .qr-modal-card h3 {
+      margin: 0 0 4px 0;
+      font-size: 16px;
+    }
+    .qr-modal-card p {
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    #qr-canvas-display {
+      display: block;
+      margin: 0 auto 10px auto;
+      border-radius: 16px;
+      border: 1px solid #e5e7eb;
+      padding: 8px;
+      background: #ffffff;
     }
 
     @media (max-width: 800px) {
@@ -274,7 +330,7 @@
       </div>
     </section>
 
-    <!-- JOIN FAMILY SECTION (for new relatives / new accounts with no family yet) -->
+    <!-- JOIN FAMILY SECTION -->
     <section id="join-family-section">
       <div class="card">
         <h2>Join your family</h2>
@@ -372,12 +428,28 @@
     </section>
   </div>
 
-  <!-- Supabase JS via CDN -->
+  <!-- QR MODAL -->
+  <div id="qr-modal" class="qr-modal-backdrop">
+    <div class="qr-modal-card">
+      <h3>Link device for <span id="qr-modal-kid-name"></span></h3>
+      <p>On the kid’s phone, open the FamilyPhone Kids app and choose “Scan QR to link device”.</p>
+      <canvas id="qr-canvas-display" width="260" height="260"></canvas>
+      <p class="muted" id="qr-modal-family-id"></p>
+      <div class="row-end">
+        <button id="qr-modal-close" class="btn-ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Supabase JS and QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+
   <script>
     // ===== CONFIG =====
     const SUPABASE_URL = "https://jllzjhebldumlcqofxpl.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g"; // <-- PUT YOUR ANON KEY HERE
+    const SUPABASE_ANON_KEY =
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpsbHpqaGVibGR1bWxjcW9meHBsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MzQwMTUsImV4cCI6MjA3OTQxMDAxNX0.2K1HpiUJumjX7gRMNbG5jCMo_C2-EeHNhIL8aUgVE1g";
 
     const { createClient } = supabase;
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -422,6 +494,13 @@
     const joinFamilyStatus = document.getElementById("join-family-status");
     const joinCreateFamilyBtn = document.getElementById("join-create-family-btn");
 
+    // QR modal DOM
+    const qrModal = document.getElementById("qr-modal");
+    const qrModalKidName = document.getElementById("qr-modal-kid-name");
+    const qrModalFamilyId = document.getElementById("qr-modal-family-id");
+    const qrModalCloseBtn = document.getElementById("qr-modal-close");
+    const qrCanvasDisplay = document.getElementById("qr-canvas-display");
+
     // State
     let currentUser = null;
     let currentFamily = null;
@@ -434,7 +513,6 @@
     let messagesSub = null;
     let lastMessages = [];
 
-    // ===== HELPERS =====
     function show(el) { el.style.display = ""; }
     function hide(el) { el.style.display = "none"; }
 
@@ -473,12 +551,25 @@
         .map(
           (k) => `
         <div class="kid-card">
-          <span>${k.display_name}</span>
-          <span class="muted">${k.id}</span>
+          <div class="kid-card-main">
+            <span>${k.display_name}</span>
+            <span class="muted">${k.id}</span>
+          </div>
+          <div class="kid-card-actions">
+            <button class="btn-ghost" data-kid-id="${k.id}" data-action="show-qr">QR</button>
+          </div>
         </div>
       `
         )
         .join("");
+
+      // bind QR buttons
+      kidsListEl.querySelectorAll("button[data-action='show-qr']").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const kidId = btn.getAttribute("data-kid-id");
+          openQrForKid(kidId);
+        });
+      });
     }
 
     function renderMessages() {
@@ -614,7 +705,6 @@
     async function loadFamilyAndData() {
       if (!currentUser) return;
       if (!myMembership) {
-        // no membership yet – show join flow
         hide(appSection);
         show(joinFamilySection);
         familyNameEl.textContent = "No family yet.";
@@ -630,7 +720,6 @@
       messagesEl.innerHTML =
         '<p class="muted" style="padding:4px 8px;">Loading messages…</p>';
 
-      // Family
       const { data: family, error: famErr } = await client
         .from("families")
         .select("*")
@@ -648,7 +737,6 @@
       familyCodeLineEl.textContent = `Family ID: ${family.id}  (Share this with relatives so they can join)`;
       chatSubtitle.textContent = "Family ID: " + family.id;
 
-      // Kids
       const { data: kids, error: kidsErr } = await client
         .from("kids")
         .select("*")
@@ -664,10 +752,8 @@
         renderKids();
       }
 
-      // Members (roles + names)
       await loadMembers();
 
-      // Messages + realtime
       await loadMessages();
       subscribeToMessages();
     }
@@ -687,9 +773,57 @@
       if (!data || data.length === 0) {
         myMembership = null;
       } else {
-        myMembership = data[0]; // first membership for now
+        myMembership = data[0];
       }
     }
+
+    // ===== QR GENERATION =====
+    function openQrForKid(kidId) {
+      if (!currentFamily) {
+        alert("No family loaded yet.");
+        return;
+      }
+      const kid = allKids.find((k) => k.id === kidId);
+      if (!kid) {
+        alert("Kid not found.");
+        return;
+      }
+
+      const payload = {
+        v: 1,
+        t: "familyphone_kid_link",
+        family_id: currentFamily.id,
+        kid_id: kid.id,
+        kid_name: kid.display_name,
+      };
+
+      qrModalKidName.textContent = kid.display_name;
+      qrModalFamilyId.textContent = `Family ID: ${currentFamily.id}`;
+      const jsonData = JSON.stringify(payload);
+
+      QRCode.toCanvas(
+        qrCanvasDisplay,
+        jsonData,
+        { width: 240 },
+        (err) => {
+          if (err) {
+            console.error("QR error:", err);
+          }
+        }
+      );
+
+      qrModal.classList.add("show");
+    }
+
+    qrModalCloseBtn.addEventListener("click", () => {
+      qrModal.classList.remove("show");
+    });
+
+    qrModal.addEventListener("click", (e) => {
+      if (e.target === qrModal) {
+        qrModal.classList.remove("show");
+      }
+    });
 
     // ===== AUTH / SESSION =====
     async function checkSession() {
@@ -707,7 +841,6 @@
 
         await loadMembershipForUser();
         if (!myMembership) {
-          // New account → ask to join or create
           show(joinFamilySection);
           hide(appSection);
         } else {
@@ -785,7 +918,6 @@
       await client.auth.signOut();
     });
 
-    // Save display name → family_members.display_name
     saveDisplayNameBtn.addEventListener("click", async () => {
       if (!currentUser || !currentFamily || !myMembership) return;
       const newName = displayNameInput.value.trim();
@@ -816,7 +948,6 @@
       }
     });
 
-    // Create family (parents only in UI)
     createFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
       if (myRole === "relative") {
@@ -837,7 +968,6 @@
           .single();
         if (error) throw error;
 
-        // Make this user a parent member
         const { error: memErr } = await client.from("family_members").insert({
           family_id: data.id,
           user_id: currentUser.id,
@@ -855,7 +985,6 @@
       }
     });
 
-    // Add kid (parents only)
     kidForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (myRole === "relative") {
@@ -894,7 +1023,6 @@
       }
     });
 
-    // Send message
     messageForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!currentFamily || !currentUser) return;
@@ -922,7 +1050,6 @@
 
     refreshMessagesBtn.addEventListener("click", loadMessages);
 
-    // JOIN FAMILY FLOW
     joinFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
       const code = joinFamilyIdInput.value.trim();
@@ -968,7 +1095,6 @@
       }
     });
 
-    // "I'm a parent – create new family" shortcut from join screen
     joinCreateFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
       const name = window.prompt("Family name?", "Richmond Family");
