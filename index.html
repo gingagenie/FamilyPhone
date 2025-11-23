@@ -292,6 +292,49 @@
       background: #ffffff;
     }
 
+    /* Image viewer (fullscreen) */
+    .image-viewer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15,23,42,0.92);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 60;
+    }
+    .image-viewer-backdrop.show {
+      display: flex;
+    }
+    .image-viewer-inner {
+      position: relative;
+      max-width: 100vw;
+      max-height: 100vh;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .image-viewer-inner img {
+      max-width: 100vw;
+      max-height: 90vh;
+      border-radius: 16px;
+      display: block;
+      margin: 0 auto;
+    }
+    .image-viewer-close {
+      position: absolute;
+      top: 8px;
+      right: 16px;
+      background: rgba(15,23,42,0.8);
+      color: #e5e7eb;
+      border-radius: 999px;
+      border: 1px solid #4b5563;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .chat-image {
+      cursor: zoom-in;
+    }
+
     @media (max-width: 800px) {
       .grid {
         grid-template-columns: minmax(0, 1fr);
@@ -447,6 +490,14 @@
     </div>
   </div>
 
+  <!-- IMAGE VIEWER MODAL -->
+  <div id="image-viewer" class="image-viewer-backdrop">
+    <div class="image-viewer-inner">
+      <button id="image-viewer-close" class="image-viewer-close">Close ✕</button>
+      <img id="image-viewer-img" src="" alt="Full image" />
+    </div>
+  </div>
+
   <!-- Supabase JS and QRCode library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
@@ -510,6 +561,11 @@
     const qrModalFamilyId = document.getElementById("qr-modal-family-id");
     const qrModalCloseBtn = document.getElementById("qr-modal-close");
     const qrCanvasDisplay = document.getElementById("qr-canvas-display");
+
+    // Image viewer DOM
+    const imageViewer = document.getElementById("image-viewer");
+    const imageViewerImg = document.getElementById("image-viewer-img");
+    const imageViewerClose = document.getElementById("image-viewer-close");
 
     // State
     let currentUser = null;
@@ -635,6 +691,7 @@
                 <img
                   src="${m.image_public_url}"
                   alt="Photo"
+                  class="chat-image"
                   style="max-width:180px; border-radius:12px; display:block;"
                 />
               </div>
@@ -837,6 +894,38 @@
       if (e.target === qrModal) {
         qrModal.classList.remove("show");
       }
+    });
+
+    // ===== IMAGE VIEWER =====
+    function openImageViewer(src) {
+      if (!src) return;
+      imageViewerImg.src = src;
+      imageViewer.classList.add("show");
+    }
+
+    function closeImageViewer() {
+      imageViewer.classList.remove("show");
+      imageViewerImg.src = "";
+    }
+
+    imageViewerClose.addEventListener("click", closeImageViewer);
+
+    imageViewer.addEventListener("click", (e) => {
+      if (e.target === imageViewer) {
+        closeImageViewer();
+      }
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && imageViewer.classList.contains("show")) {
+        closeImageViewer();
+      }
+    });
+
+    messagesEl.addEventListener("click", (e) => {
+      const img = e.target.closest("img.chat-image");
+      if (!img) return;
+      openImageViewer(img.src);
     });
 
     // ===== AUTH / SESSION =====
