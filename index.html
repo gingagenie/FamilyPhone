@@ -127,9 +127,9 @@
       min-height: 0;
     }
     .kid-card {
-      border-radius: 999px;
+      border-radius: 12px;
       border: 1px solid #e5e7eb;
-      padding: 6px 10px;
+      padding: 8px 10px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -141,6 +141,13 @@
     .kid-card-main {
       display: flex;
       flex-direction: column;
+      gap: 2px;
+    }
+    .kid-card-main span.muted {
+      font-size: 11px;
+    }
+    .kid-location-line {
+      font-size: 11px;
     }
     .kid-card-actions {
       display: flex;
@@ -429,7 +436,7 @@
           <!-- Kids -->
           <div class="card" style="flex:1; min-height:0;">
             <h2>Kids</h2>
-            <p class="muted">Kids linked to this family.</p>
+            <p class="muted">Kids linked to this family. Location is from their phone’s FamilyPhone app.</p>
             <div id="kids-list" class="kid-list">
               <p class="muted">Loading kids…</p>
             </div>
@@ -578,6 +585,7 @@
     let membersByUserId = {};
     let lastMessages = [];
     let messagesPollId = null;
+    let kidLocationsPollId = null;
 
     function show(el) { el.style.display = ""; }
     function hide(el) { el.style.display = "none"; }
@@ -620,6 +628,9 @@
           <div class="kid-card-main">
             <span>${k.display_name}</span>
             <span class="muted">${k.id}</span>
+            <span class="muted kid-location-line" id="kid-location-${k.id}">
+              Last location: no data yet
+            </span>
           </div>
           <div class="kid-card-actions">
             <button class="btn-ghost" data-kid-id="${k.id}" data-action="show-qr">QR</button>
@@ -772,6 +783,47 @@
       setRoleUI();
     }
 
+    async function loadKidLocations() {
+      if (!currentFamily || !allKids.length) return;
+
+      const { data, error } = await client
+        .from("kid_locations")
+        .select("*")
+        .eq("family_id", currentFamily.id)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("kid_locations load error", error);
+        return;
+      }
+
+      const latestByKid = {};
+      (data || []).forEach((loc) => {
+        if (!latestByKid[loc.kid_id]) {
+          latestByKid[loc.kid_id] = loc;
+        }
+      });
+
+      allKids.forEach((kid) => {
+        const el = document.getElementById("kid-location-" + kid.id);
+        if (!el) return;
+        const loc = latestByKid[kid.id];
+        if (!loc) {
+          el.textContent = "Last location: no data yet";
+          return;
+        }
+        const when = new Date(loc.created_at);
+        const timeStr = when.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        const mapsUrl = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+        el.innerHTML =
+          `Last location: ${timeStr} &nbsp;` +
+          `<a href="${mapsUrl}" target="_blank" rel="noopener" style="text-decoration:underline; color:#2563eb;">View on map</a>`;
+      });
+    }
+
     async function loadFamilyAndData() {
       if (!currentUser) return;
       if (!myMembership) {
@@ -824,9 +876,13 @@
 
       await loadMembers();
       await loadMessages();
+      await loadKidLocations();
 
       if (messagesPollId) clearInterval(messagesPollId);
       messagesPollId = setInterval(loadMessages, 3000);
+
+      if (kidLocationsPollId) clearInterval(kidLocationsPollId);
+      kidLocationsPollId = setInterval(loadKidLocations, 60000);
     }
 
     async function loadMembershipForUser() {
@@ -960,6 +1016,7 @@
         hide(joinFamilySection);
         hide(appSection);
         if (messagesPollId) clearInterval(messagesPollId);
+        if (kidLocationsPollId) clearInterval(kidLocationsPollId);
       }
     }
 
@@ -1117,6 +1174,7 @@
         if (!kidsErr) {
           allKids = kids || [];
           renderKids();
+          await loadKidLocations();
           await loadMessages();
         }
       } catch (err) {
@@ -1206,7 +1264,10 @@
       }
     });
 
-    refreshMessagesBtn.addEventListener("click", loadMessages);
+    refreshMessagesBtn.addEventListener("click", () => {
+      loadMessages();
+      loadKidLocations();
+    });
 
     joinFamilyBtn.addEventListener("click", async () => {
       if (!currentUser) return;
