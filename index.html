@@ -151,9 +151,28 @@
     }
     .kid-card-actions {
       display: flex;
-      gap: 6px;
+      gap: 8px;
+      align-items: center;
       flex-shrink: 0;
     }
+    .kid-toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 11px;
+    }
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #374151;
+    }
+    .toggle-label input {
+      margin: 0;
+      width: auto;
+    }
+
     .chat-shell {
       flex: 1;
       display: flex;
@@ -209,6 +228,11 @@
       background: #0f172a;
       border-bottom-left-radius: 4px;
     }
+    .bubble-panic {
+      background: #b91c1c !important;
+      color: #fee2e2 !important;
+      border-radius: 18px !important;
+    }
     .bubble-meta {
       font-size: 10px;
       opacity: 0.7;
@@ -250,6 +274,30 @@
       background: #fef3c7;
       color: #92400e;
     }
+
+    .chip-location {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 500;
+      margin-right: 4px;
+    }
+    .chip-location-ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .chip-location-stale {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .chip-location-offline {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
     #join-family-section {
       display: none;
       max-width: 480px;
@@ -602,7 +650,7 @@
 
         createFamilyBtn.disabled = true;
         createFamilyBtn.style.opacity = "0.5";
-        kidsRoleNoteEl.textContent = "You’re a relative – you can chat, but only parents can add kids.";
+        kidsRoleNoteEl.textContent = "You’re a relative – you can chat, but only parents can add kids or change modes.";
         familyRoleNoteEl.textContent = "You’re a relative in this family. Ask a parent if you need changes.";
       } else {
         roleChip.textContent = "Parent";
@@ -612,8 +660,12 @@
         createFamilyBtn.disabled = false;
         createFamilyBtn.style.opacity = "1";
         kidsRoleNoteEl.textContent = "";
-        familyRoleNoteEl.textContent = "You’re a parent – you can manage kids and family settings.";
+        familyRoleNoteEl.textContent = "You’re a parent – you can manage kids, modes and family settings.";
       }
+    }
+
+    function isPanicMessage(m) {
+      return m.text && m.text.startsWith("🚨 PANIC");
     }
 
     function renderKids() {
@@ -633,6 +685,22 @@
             </span>
           </div>
           <div class="kid-card-actions">
+            <div class="kid-toggles">
+              <label class="toggle-label">
+                <input type="checkbox"
+                  data-kid-id="${k.id}"
+                  data-toggle="quiet"
+                  ${k.quiet_mode ? "checked" : ""} />
+                Quiet mode
+              </label>
+              <label class="toggle-label">
+                <input type="checkbox"
+                  data-kid-id="${k.id}"
+                  data-toggle="school"
+                  ${k.school_mode ? "checked" : ""} />
+                School mode
+              </label>
+            </div>
             <button class="btn-ghost" data-kid-id="${k.id}" data-action="show-qr">QR</button>
           </div>
         </div>
@@ -640,12 +708,67 @@
         )
         .join("");
 
+      // Wire QR buttons
       kidsListEl.querySelectorAll("button[data-action='show-qr']").forEach((btn) => {
         btn.addEventListener("click", () => {
           const kidId = btn.getAttribute("data-kid-id");
           openQrForKid(kidId);
         });
       });
+
+      // Wire mode toggles
+      kidsListEl.querySelectorAll("input[data-toggle]").forEach((input) => {
+        input.addEventListener("change", handleKidModeToggle);
+      });
+    }
+
+    function handleKidModeToggle(e) {
+      const input = e.target;
+      const kidId = input.getAttribute("data-kid-id");
+      const toggleType = input.getAttribute("data-toggle");
+      const value = input.checked;
+
+      if (!kidId || !toggleType) return;
+
+      if (myRole === "relative") {
+        alert("Only parents can change modes.");
+        // revert
+        const kid = allKids.find((k) => k.id === kidId);
+        if (kid) {
+          if (toggleType === "quiet") input.checked = !!kid.quiet_mode;
+          if (toggleType === "school") input.checked = !!kid.school_mode;
+        }
+        return;
+      }
+
+      const field = toggleType === "quiet" ? "quiet_mode" : "school_mode";
+      updateKidMode(kidId, field, value);
+    }
+
+    async function updateKidMode(kidId, field, value) {
+      try {
+        const patch = {};
+        patch[field] = value;
+
+        const { error } = await client
+          .from("kids")
+          .update(patch)
+          .eq("id", kidId);
+
+        if (error) throw error;
+
+        // Update local state
+        const kid = allKids.find((k) => k.id === kidId);
+        if (kid) {
+          kid[field] = value;
+        }
+
+        // Update location line (so we see quiet/school tags immediately if we want)
+        await loadKidLocations();
+      } catch (err) {
+        console.error("updateKidMode error", err);
+        alert("Failed to update mode – check console.");
+      }
     }
 
     function renderMessages() {
@@ -686,7 +809,11 @@
             }
           }
 
-          const cls = isSelf ? "bubble bubble-self" : "bubble bubble-other";
+          let cls = isSelf ? "bubble bubble-self" : "bubble bubble-other";
+          if (isPanicMessage(m)) {
+            cls += " bubble-panic";
+          }
+
           const time = new Date(m.created_at).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -783,6 +910,19 @@
       setRoleUI();
     }
 
+    function humanizeMinutesDiff(diffMinutes) {
+      if (diffMinutes < 1) return "just now";
+      if (diffMinutes < 60) return `${diffMinutes} min ago`;
+      const hours = Math.floor(diffMinutes / 60);
+      const mins = diffMinutes % 60;
+      if (hours >= 24) {
+        const days = Math.floor(hours / 24);
+        return `${days} day${days === 1 ? "" : "s"} ago`;
+      }
+      if (mins === 0) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+      return `${hours} hr${hours === 1 ? "" : "s"} ${mins} min ago`;
+    }
+
     async function loadKidLocations() {
       if (!currentFamily || !allKids.length) return;
 
@@ -797,6 +937,7 @@
         return;
       }
 
+      const now = new Date();
       const latestByKid = {};
       (data || []).forEach((loc) => {
         if (!latestByKid[loc.kid_id]) {
@@ -809,17 +950,34 @@
         if (!el) return;
         const loc = latestByKid[kid.id];
         if (!loc) {
-          el.textContent = "Last location: no data yet";
+          el.innerHTML =
+            `<span class="chip-location chip-location-offline">Offline</span>` +
+            `No location yet`;
           return;
         }
         const when = new Date(loc.created_at);
-        const timeStr = when.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
+        const diffMs = now - when;
+        const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
+
+        let status = "Offline";
+        let chipClass = "chip-location-offline";
+        if (diffMinutes <= 15) {
+          status = "Location OK";
+          chipClass = "chip-location-ok";
+        } else if (diffMinutes <= 30) {
+          status = "Stale";
+          chipClass = "chip-location-stale";
+        } else {
+          status = "Offline";
+          chipClass = "chip-location-offline";
+        }
+
+        const prettyTime = humanizeMinutesDiff(diffMinutes);
         const mapsUrl = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+
         el.innerHTML =
-          `Last location: ${timeStr} &nbsp;` +
+          `<span class="chip-location ${chipClass}">${status}</span>` +
+          `Last seen ${prettyTime} &nbsp;` +
           `<a href="${mapsUrl}" target="_blank" rel="noopener" style="text-decoration:underline; color:#2563eb;">View on map</a>`;
       });
     }
